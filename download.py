@@ -1,5 +1,5 @@
 from plexapi.myplex import MyPlexAccount
-username  =input('Votre username:')
+username = input('Votre username:')
 password = input('Votre password:')
 
 
@@ -7,23 +7,31 @@ password = input('Votre password:')
 account = MyPlexAccount(username, password)
 
 print("Liste des serveurs: ")
+i=1
 for ressour in account.resources():
-    print(ressour.name)
+    print("["+str(i)+"] "+ressour.name)
+    i = i+1
 
-servername =input('Quel serveur ?')
+servername = input('Quel serveur ?')
+servername = account.resources()[int(servername)].name
 
 plex = account.resource(servername).connect()  # returns a PlexServer instance
-
+i=1
 for sec in plex.library.sections():
-    print(sec.name)
+    print("[" + str(i) + "] " + sec.title)
+    i = i + 1
 
 section = input('Quelle section ?')
+section = plex.library.sections()[int(section)].title
 
 movies = plex.library.section(section)
-for video in movies.search(unwatched=True):
-    print(video.title)
+i=1
+for video in movies.all():
+    print("[" + str(i) + "] " + video.title)
+    i = i + 1
 
 film =input('Quel film ?')
+film = movies.all()[int(film)].title
 
 todownload = plex.library.section(section).get(film)
 
