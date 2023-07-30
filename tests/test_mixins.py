@@ -8,24 +8,28 @@ from . import conftest as utils
 
 TEST_MIXIN_FIELD = "Test Field"
 TEST_MIXIN_DATE = utils.MIN_DATETIME
-TEST_MIXIN_TAG = "Test Tag"
+TEST_MIXIN_TAG = "Test Tag !@#$%^&*()-_=+[];:'\"/?,."
 CUTE_CAT_SHA1 = "9f7003fc401761d8e0b0364d428b2dab2f789dbb"
 AUDIO_STUB_SHA1 = "1abc20d5fdc904201bf8988ca6ef30f96bb73617"
 
 
-def _test_mixins_field(obj, attr, field_method):
+def _test_mixins_field(obj, attr, field_method, default=None, value=None):
     edit_field_method = getattr(obj, "edit" + field_method)
     _value = lambda: getattr(obj, attr)
     _fields = lambda: [f for f in obj.fields if f.name == attr]
+
     # Check field does not match to begin with
-    default_value = _value()
-    if isinstance(default_value, datetime):
+    default_value = default or _value()
+    if value:
+        test_value = value
+    elif isinstance(default_value, datetime):
         test_value = TEST_MIXIN_DATE
     elif isinstance(default_value, int):
         test_value = default_value + 1
     else:
         test_value = TEST_MIXIN_FIELD
     assert default_value != test_value
+
     # Edit and lock the field
     edit_field_method(test_value)
     obj.reload()
@@ -33,6 +37,7 @@ def _test_mixins_field(obj, attr, field_method):
     fields = _fields()
     assert value == test_value
     assert fields and fields[0].locked
+
     # Reset and unlock the field to restore the clean state
     edit_field_method(default_value, locked=False)
     obj.reload()
@@ -42,8 +47,16 @@ def _test_mixins_field(obj, attr, field_method):
     assert not fields
 
 
+def edit_added_at(obj):
+    _test_mixins_field(obj, "addedAt", "AddedAt")
+
+
 def edit_content_rating(obj):
     _test_mixins_field(obj, "contentRating", "ContentRating")
+
+
+def edit_edition_title(obj):
+    _test_mixins_field(obj, "editionTitle", "EditionTitle")
 
 
 def edit_originally_available(obj):
@@ -90,23 +103,43 @@ def edit_photo_captured_time(obj):
     _test_mixins_field(obj, "originallyAvailableAt", "CapturedTime")
 
 
+def edit_user_rating(obj):
+    _test_mixins_field(obj, "userRating", "UserRating", default=None, value=10)
+
+
 def _test_mixins_tag(obj, attr, tag_method):
     add_tag_method = getattr(obj, "add" + tag_method)
     remove_tag_method = getattr(obj, "remove" + tag_method)
     field_name = obj._tagSingular(attr)
     _tags = lambda: [t.tag for t in getattr(obj, attr)]
     _fields = lambda: [f for f in obj.fields if f.name == field_name]
+
     # Check tag is not present to begin with
     tags = _tags()
     assert TEST_MIXIN_TAG not in tags
-    # Add tag and lock the field
+
+    # Add tag string and lock the field
     add_tag_method(TEST_MIXIN_TAG)
     obj.reload()
     tags = _tags()
     fields = _fields()
     assert TEST_MIXIN_TAG in tags
     assert fields and fields[0].locked
-    # Remove tag and unlock to field to restore the clean state
+
+    # Remove MediaTag object
+    mediaTag = next(t for t in getattr(obj, attr) if t.tag == TEST_MIXIN_TAG)
+    remove_tag_method(mediaTag)
+    obj.reload()
+    tags = _tags()
+    assert TEST_MIXIN_TAG not in tags
+
+    # Add MediaTag object
+    add_tag_method(mediaTag)
+    obj.reload()
+    tags = _tags()
+    assert TEST_MIXIN_TAG in tags
+
+    # Remove tag string and unlock to field to restore the clean state
     remove_tag_method(TEST_MIXIN_TAG, locked=False)
     obj.reload()
     tags = _tags()
@@ -178,10 +211,6 @@ def lock_art(obj):
     _test_mixins_lock_image(obj, "arts")
 
 
-def lock_banner(obj):
-    _test_mixins_lock_image(obj, "banners")
-
-
 def lock_poster(obj):
     _test_mixins_lock_image(obj, "posters")
 
@@ -209,6 +238,7 @@ def _test_mixins_edit_image(obj, attr):
             assert images[1].selected is True
     else:
         default_image = None
+
     # Test upload image from file
     upload_img_method(filepath=utils.STUB_IMAGE_PATH)
     images = get_img_method()
@@ -217,9 +247,25 @@ def _test_mixins_edit_image(obj, attr):
         if i.ratingKey.startswith("upload://") and i.ratingKey.endswith(CUTE_CAT_SHA1)
     ]
     assert file_image
+
     # Reset to default image
     if default_image:
         set_img_method(default_image)
+
+    # Test upload image from file-like ojbect
+    with open(utils.STUB_IMAGE_PATH, "rb") as f:
+        upload_img_method(filepath=f)
+        images = get_img_method()
+        file_image = [
+            i for i in images
+            if i.ratingKey.startswith("upload://") and i.ratingKey.endswith(CUTE_CAT_SHA1)
+        ]
+        assert file_image
+
+    # Reset to default image
+    if default_image:
+        set_img_method(default_image)
+
     # Unlock the image
     unlock_img_method = getattr(obj, "unlock" + cap_attr)
     unlock_img_method()
@@ -227,10 +273,6 @@ def _test_mixins_edit_image(obj, attr):
 
 def edit_art(obj):
     _test_mixins_edit_image(obj, "arts")
-
-
-def edit_banner(obj):
-    _test_mixins_edit_image(obj, "banners")
 
 
 def edit_poster(obj):
@@ -253,16 +295,13 @@ def attr_artUrl(obj):
     _test_mixins_imageUrl(obj, "art")
 
 
-def attr_bannerUrl(obj):
-    _test_mixins_imageUrl(obj, "banner")
-
-
 def attr_posterUrl(obj):
     _test_mixins_imageUrl(obj, "thumb")
 
 
 def _test_mixins_edit_theme(obj):
     _fields = lambda: [f.name for f in obj.fields]
+
     # Test upload theme from file
     obj.uploadTheme(filepath=utils.STUB_MP3_PATH)
     themes = obj.themes()
@@ -273,10 +312,12 @@ def _test_mixins_edit_theme(obj):
     assert file_theme
     obj.reload()
     assert "theme" in _fields()
+
     # Unlock the theme
     obj.unlockTheme()
     obj.reload()
     assert "theme" not in _fields()
+    
     # Lock the theme
     obj.lockTheme()
     obj.reload()

@@ -3,35 +3,35 @@
 """
 Install PlexAPI
 """
-import re
+from pkg_resources import parse_requirements
 try:
     from setuptools import setup
 except ImportError:
     from distutils.core import setup
 
-from plexapi import const
+# Get version
+version = {}
+with open('plexapi/const.py') as handle:
+    exec(handle.read(), version)
 
 # Get README.rst contents
-readme = open('README.rst', 'r').read()
+with open('README.rst') as handle:
+    readme = handle.read()
 
-# Get requirments
-requirements = []
+# Get requirements
 with open('requirements.txt') as handle:
-    for line in handle.readlines():
-        if not line.startswith('#'):
-            package = line.strip().split('=', 1)[0]
-            requirements.append(package)
+    requirements = [str(req) for req in parse_requirements(handle)]
 
 setup(
     name='PlexAPI',
-    version=const.__version__,
+    version=version['__version__'],
     description='Python bindings for the Plex API.',
     author='Michael Shepanski',
     author_email='michael.shepanski@gmail.com',
     url='https://github.com/pkkid/python-plexapi',
     packages=['plexapi'],
     install_requires=requirements,
-    python_requires='>=3.6',
+    python_requires='>=3.8',
     long_description=readme,
     keywords=['plex', 'api'],
     classifiers=[

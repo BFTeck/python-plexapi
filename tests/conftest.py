@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import math
 import os
 import time
 from datetime import datetime
@@ -7,6 +8,7 @@ from functools import partial
 import plexapi
 import pytest
 import requests
+from PIL import Image, ImageColor, ImageStat
 from plexapi.client import PlexClient
 from plexapi.exceptions import NotFound
 from plexapi.myplex import MyPlexAccount
@@ -51,7 +53,7 @@ ENTITLEMENTS = {
     "windows",
     "windows_phone",
 }
-SYNC_DEVICE_IDENTIFIER = "test-sync-client-%s" % plexapi.X_PLEX_IDENTIFIER
+SYNC_DEVICE_IDENTIFIER = f"test-sync-client-{plexapi.X_PLEX_IDENTIFIER}"
 SYNC_DEVICE_HEADERS = {
     "X-Plex-Provides": "sync-target",
     "X-Plex-Platform": "iOS",
@@ -155,7 +157,7 @@ def account_synctarget(account_plexpass):
 
 @pytest.fixture()
 def mocked_account(requests_mock):
-    requests_mock.get("https://plex.tv/users/account", text=ACCOUNT_XML)
+    requests_mock.get("https://plex.tv/api/v2/user", text=ACCOUNT_XML)
     return MyPlexAccount(token="faketoken")
 
 
@@ -307,6 +309,18 @@ def subtitle():
 
 
 @pytest.fixture()
+def m3ufile(plex, music, track, tmp_path):
+    for path, paths, files in plex.walk(music.locations[0]):
+        for file in files:
+            if file.title == "playlist.m3u":
+                return file.path
+    m3u = tmp_path / "playlist.m3u"
+    with open(m3u, "w") as handler:
+        handler.write(track.media[0].parts[0].file)
+    return str(m3u)
+
+
+@pytest.fixture()
 def shared_username(account):
     username = os.environ.get("SHARED_USERNAME", "PKKid")
     for user in account.users():
@@ -320,7 +334,7 @@ def shared_username(account):
             in (user.username.lower(), user.email.lower(), str(user.id))
         ):
             return username
-    pytest.skip("Shared user %s wasn't found in your MyPlex account" % username)
+    pytest.skip(f"Shared user {username} wasn't found in your MyPlex account")
 
 
 @pytest.fixture()
@@ -402,10 +416,6 @@ def is_art(key):
     return is_metadata(key, contains="/art/")
 
 
-def is_banner(key):
-    return is_metadata(key, contains="/banner/")
-
-
 def is_thumb(key):
     return is_metadata(key, contains="/thumb/")
 
@@ -423,9 +433,42 @@ def wait_until(condition_function, delay=0.25, timeout=1, *args, **kwargs):
         time.sleep(delay)
         ready = condition_function(*args, **kwargs)
 
-    assert ready, "Wait timeout after %d retries, %.2f seconds" % (
-        retries,
-        time.time() - start,
-    )
+    assert ready, f"Wait timeout after {int(retries)} retries, {time.time() - start:.2f} seconds"
 
     return ready
+
+
+def detect_color_image(file, thumb_size=150, MSE_cutoff=22, adjust_color_bias=True):
+    # http://stackoverflow.com/questions/20068945/detect-if-image-is-color-grayscale-or-black-and-white-with-python-pil
+    pilimg = Image.open(file)
+    bands = pilimg.getbands()
+    if bands == ("R", "G", "B") or bands == ("R", "G", "B", "A"):
+        thumb = pilimg.resize((thumb_size, thumb_size))
+        sse, bias = 0, [0, 0, 0]
+        if adjust_color_bias:
+            bias = ImageStat.Stat(thumb).mean[:3]
+            bias = [b - sum(bias) / 3 for b in bias]
+        for pixel in thumb.getdata():
+            mu = sum(pixel) / 3
+            sse += sum(
+                (pixel[i] - mu - bias[i]) * (pixel[i] - mu - bias[i]) for i in [0, 1, 2]
+            )
+        mse = float(sse) / (thumb_size * thumb_size)
+        return "grayscale" if mse <= MSE_cutoff else "color"
+    elif len(bands) == 1:
+        return "blackandwhite"
+
+
+def detect_dominant_hexcolor(file):
+    # https://stackoverflow.com/questions/3241929/python-find-dominant-most-common-color-in-an-image
+    pilimg = Image.open(file)
+    pilimg.convert("RGB")
+    pilimg.resize((1, 1), resample=0)
+    rgb_color = pilimg.getpixel((0, 0))
+    return "{:02x}{:02x}{:02x}".format(*rgb_color)
+
+
+def detect_color_distance(hex1, hex2, threshold=100):
+    rgb1 = ImageColor.getcolor("#" + hex1, "RGB")
+    rgb2 = ImageColor.getcolor("#" + hex2, "RGB")
+    return math.sqrt(sum((c1 - c2) ** 2 for c1, c2 in zip(rgb1, rgb2))) <= threshold

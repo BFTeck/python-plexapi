@@ -3,13 +3,12 @@ import os
 from urllib.parse import quote_plus
 
 from plexapi import media, utils, video
-from plexapi.base import Playable, PlexPartialObject
+from plexapi.base import Playable, PlexPartialObject, PlexSession
 from plexapi.exceptions import BadRequest
 from plexapi.mixins import (
     RatingMixin,
     ArtUrlMixin, ArtMixin, PosterUrlMixin, PosterMixin,
-    SortTitleMixin, SummaryMixin, TitleMixin, PhotoCapturedTimeMixin,
-    TagMixin
+    PhotoalbumEditMixins, PhotoEditMixins
 )
 
 
@@ -18,7 +17,7 @@ class Photoalbum(
     PlexPartialObject,
     RatingMixin,
     ArtMixin, PosterMixin,
-    SortTitleMixin, SummaryMixin, TitleMixin
+    PhotoalbumEditMixins
 ):
     """ Represents a single Photoalbum (collection of photos).
 
@@ -79,12 +78,12 @@ class Photoalbum(
             Parameters:
                 title (str): Title of the photo album to return.
         """
-        key = '/library/metadata/%s/children' % self.ratingKey
+        key = f'{self.key}/children'
         return self.fetchItem(key, Photoalbum, title__iexact=title)
 
     def albums(self, **kwargs):
         """ Returns a list of :class:`~plexapi.photo.Photoalbum` objects in the album. """
-        key = '/library/metadata/%s/children' % self.ratingKey
+        key = f'{self.key}/children'
         return self.fetchItems(key, Photoalbum, **kwargs)
 
     def photo(self, title):
@@ -93,12 +92,12 @@ class Photoalbum(
             Parameters:
                 title (str): Title of the photo to return.
         """
-        key = '/library/metadata/%s/children' % self.ratingKey
+        key = f'{self.key}/children'
         return self.fetchItem(key, Photo, title__iexact=title)
 
     def photos(self, **kwargs):
         """ Returns a list of :class:`~plexapi.photo.Photo` objects in the album. """
-        key = '/library/metadata/%s/children' % self.ratingKey
+        key = f'{self.key}/children'
         return self.fetchItems(key, Photo, **kwargs)
 
     def clip(self, title):
@@ -107,12 +106,12 @@ class Photoalbum(
             Parameters:
                 title (str): Title of the clip to return.
         """
-        key = '/library/metadata/%s/children' % self.ratingKey
+        key = f'{self.key}/children'
         return self.fetchItem(key, video.Clip, title__iexact=title)
 
     def clips(self, **kwargs):
         """ Returns a list of :class:`~plexapi.video.Clip` objects in the album. """
-        key = '/library/metadata/%s/children' % self.ratingKey
+        key = f'{self.key}/children'
         return self.fetchItems(key, video.Clip, **kwargs)
 
     def get(self, title):
@@ -146,8 +145,7 @@ class Photo(
     PlexPartialObject, Playable,
     RatingMixin,
     ArtUrlMixin, PosterUrlMixin,
-    PhotoCapturedTimeMixin, SortTitleMixin, SummaryMixin, TitleMixin,
-    TagMixin
+    PhotoEditMixins
 ):
     """ Represents a single Photo.
 
@@ -226,7 +224,7 @@ class Photo(
     def _prettyfilename(self):
         """ Returns a filename for use in download. """
         if self.parentTitle:
-            return '%s - %s' % (self.parentTitle, self.title)
+            return f'{self.parentTitle} - {self.title}'
         return self.title
 
     def photoalbum(self):
@@ -282,7 +280,7 @@ class Photo(
 
         section = self.section()
 
-        sync_item.location = 'library://%s/item/%s' % (section.uuid, quote_plus(self.key))
+        sync_item.location = f'library://{section.uuid}/item/{quote_plus(self.key)}'
         sync_item.policy = Policy.create(limit)
         sync_item.mediaSettings = MediaSettings.createPhoto(resolution)
 
@@ -291,3 +289,16 @@ class Photo(
     def _getWebURL(self, base=None):
         """ Get the Plex Web URL with the correct parameters. """
         return self._server._buildWebURL(base=base, endpoint='details', key=self.parentKey, legacy=1)
+
+
+@utils.registerPlexObject
+class PhotoSession(PlexSession, Photo):
+    """ Represents a single Photo session
+        loaded from :func:`~plexapi.server.PlexServer.sessions`.
+    """
+    _SESSIONTYPE = True
+
+    def _loadData(self, data):
+        """ Load attribute values from Plex XML response. """
+        Photo._loadData(self, data)
+        PlexSession._loadData(self, data)

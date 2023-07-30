@@ -34,7 +34,7 @@ are optional. An example config.ini file may look like the following with all po
     level = INFO
     path = ~/.config/plexapi/plexapi.log
     rotate_bytes = 512000
-    secrets = false
+    show_secrets = false
     
 
 Environment Variables
@@ -55,6 +55,11 @@ Section [plexapi] Options
     Timeout in seconds to use when making requests to the Plex Media Server or Plex Client
     resources (default: 30).
 
+**autoreload**
+    By default PlexAPI will automatically :func:`~plexapi.base.PlexObject.reload` any :any:`PlexPartialObject`
+    when accessing a missing attribute. When this option is set to `false`, automatic reloading will be
+    disabled and :func:`~plexapi.base.PlexObject.reload` must be called manually (default: true).
+
 **enable_fast_connect**
     By default Plex will be trying to connect with all available connection methods simultaneously,
     combining local and remote addresses, http and https, and be waiting for all connection to
@@ -62,7 +67,7 @@ Section [plexapi] Options
     to connect to your Plex Server outside of your home network.
 
     When the options is set to `true` the connection procedure will be aborted with first successfully
-    established connection.
+    established connection (default: false).
 
 
 Section [auth] Options
@@ -167,7 +172,7 @@ Section [log] Options
 **rotate_bytes**
     Max size of the log file before rotating logs to a backup file (default: 512000 equals 0.5MB).
 
-**secrets**
+**show_secrets**
     By default Plex will hide all passwords and token values when logging. Set this to 'true' to enable
     logging these secrets. This should only be done on a private server and only enabled when needed
     (default: false).
