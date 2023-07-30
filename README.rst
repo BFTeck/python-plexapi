@@ -81,8 +81,8 @@ Usage Examples
 
 .. code-block:: python
 
-    # Example 2: Mark all Game of Thrones episodes watched.
-    plex.library.section('TV Shows').get('Game of Thrones').markWatched()
+    # Example 2: Mark all Game of Thrones episodes as played.
+    plex.library.section('TV Shows').get('Game of Thrones').markPlayed()
 
 
 .. code-block:: python
@@ -105,7 +105,7 @@ Usage Examples
 
     # Example 5: List all content with the word 'Game' in the title.
     for video in plex.search('Game'):
-        print('%s (%s)' % (video.title, video.TYPE))
+        print(f'{video.title} ({video.TYPE})')
 
 
 .. code-block:: python

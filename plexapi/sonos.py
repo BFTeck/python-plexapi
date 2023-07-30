@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import requests
+
 from plexapi import CONFIG, X_PLEX_IDENTIFIER
 from plexapi.client import PlexClient
 from plexapi.exceptions import BadRequest
@@ -96,9 +97,7 @@ class PlexSonosClient(PlexClient):
                 {
                     "type": "music",
                     "providerIdentifier": "com.plexapp.plugins.library",
-                    "containerKey": "/playQueues/{}?own=1".format(
-                        playqueue.playQueueID
-                    ),
+                    "containerKey": f"/playQueues/{playqueue.playQueueID}?own=1",
                     "key": media.key,
                     "offset": offset,
                     "machineIdentifier": media._server.machineIdentifier,

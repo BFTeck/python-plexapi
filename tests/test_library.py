@@ -55,11 +55,18 @@ def test_library_sectionByID_with_attrs(plex, movies):
 
 def test_library_section_get_movie(movies):
     assert movies.get("Sita Sings the Blues")
+    assert movies.get(None, filters={"title": "Big Buck Bunny", "year": 2008})
+    with pytest.raises(NotFound):
+        movies.get("invalid title")
 
 
 def test_library_MovieSection_getGuid(movies, movie):
+    result = movies.getGuid(guid=movie.guid)
+    assert result == movie
     result = movies.getGuid(guid=movie.guids[0].id)
     assert result == movie
+    with pytest.raises(NotFound):
+        movies.getGuid(guid='plex://movie/abcdefg')
     with pytest.raises(NotFound):
         movies.getGuid(guid='imdb://tt00000000')
 
@@ -107,7 +114,7 @@ def test_library_section_delete(movies, patched_http_call):
 
 
 def test_library_fetchItem(plex, movie):
-    item1 = plex.library.fetchItem("/library/metadata/%s" % movie.ratingKey)
+    item1 = plex.library.fetchItem(f"/library/metadata/{movie.ratingKey}")
     item2 = plex.library.fetchItem(movie.ratingKey)
     assert item1.title == "Elephants Dream"
     assert item1 == item2 == movie
@@ -116,7 +123,7 @@ def test_library_fetchItem(plex, movie):
 def test_library_onDeck(plex, movie):
     movie.updateProgress(movie.duration // 4)  # set progress to 25%
     assert movie in plex.library.onDeck()
-    movie.markUnwatched()
+    movie.markUnplayed()
 
 
 def test_library_recentlyAdded(plex):
@@ -225,6 +232,13 @@ def test_library_Library_search(plex):
     assert len(plex.library.search(libtype="episode"))
 
 
+def test_library_Library_tags(plex):
+    tags = plex.library.tags('genre')
+    assert len(tags)
+    with pytest.raises(NotFound):
+        plex.library.tags('unknown')
+
+
 def test_library_MovieSection_update(movies):
     movies.update()
 
@@ -253,10 +267,10 @@ def test_library_deleteMediaPreviews(movies):
 def test_library_MovieSection_onDeck(movie, movies, tvshows, episode):
     movie.updateProgress(movie.duration // 4)  # set progress to 25%
     assert movie in movies.onDeck()
-    movie.markUnwatched()
+    movie.markUnplayed()
     episode.updateProgress(episode.duration // 4)
     assert episode in tvshows.onDeck()
-    episode.markUnwatched()
+    episode.markUnplayed()
 
 
 def test_library_MovieSection_searchMovies(movies):
@@ -289,13 +303,42 @@ def test_library_MovieSection_collection_exception(movies):
         movies.collection("Does Not Exists")
 
 
+@pytest.mark.authenticated
+def test_library_MovieSection_managedHubs(movies):
+    recommendations = movies.managedHubs()
+    with pytest.raises(BadRequest):
+        recommendations[0].remove()
+    first = recommendations[0]
+    first.promoteRecommended().promoteHome().promoteShared()
+    assert first.promotedToRecommended is True
+    assert first.promotedToOwnHome is True
+    assert first.promotedToSharedHome is True
+    first.demoteRecommended().demoteHome().demoteShared()
+    assert first.promotedToRecommended is False
+    assert first.promotedToOwnHome is False
+    assert first.promotedToSharedHome is False
+    last = recommendations[-1]
+    last.move()
+    recommendations = movies.managedHubs()
+    assert first.identifier == recommendations[1].identifier
+    assert last.identifier == recommendations[0].identifier
+    last.move(after=first)
+    recommendations = movies.managedHubs()
+    assert first.identifier == recommendations[0].identifier
+    assert last.identifier == recommendations[1].identifier
+    movies.resetManagedHubs()
+    recommendations = movies.managedHubs()
+    assert first.identifier == recommendations[0].identifier
+    assert last.identifier == recommendations[-1].identifier
+
+
 def test_library_MovieSection_PlexWebURL(plex, movies):
     tab = 'library'
     url = movies.getWebURL(tab=tab)
     assert url.startswith('https://app.plex.tv/desktop')
     assert plex.machineIdentifier in url
-    assert 'source=%s' % movies.key in url
-    assert 'pivot=%s' % tab in url
+    assert f'source={movies.key}' in url
+    assert f'pivot={tab}' in url
     # Test a different base
     base = 'https://doesnotexist.com/plex'
     url = movies.getWebURL(base=base)
@@ -309,7 +352,7 @@ def test_library_MovieSection_PlexWebURL_hub(plex, movies):
     url = hub.section().getWebURL(key=hub.key)
     assert url.startswith('https://app.plex.tv/desktop')
     assert plex.machineIdentifier in url
-    assert 'source=%s' % movies.key in url
+    assert f'source={movies.key}' in url
     assert quote_plus(hub.key) in url
 
 
@@ -389,13 +432,12 @@ def test_library_MusicSection_recentlyAdded(music, artist):
 
 def test_library_PhotoSection_searchAlbums(photos, photoalbum):
     title = photoalbum.title
-    albums = photos.searchAlbums(title)
-    assert len(albums)
+    assert len(photos.searchAlbums(title=title))
 
 
 def test_library_PhotoSection_searchPhotos(photos, photoalbum):
     title = photoalbum.photos()[0].title
-    assert len(photos.searchPhotos(title))
+    assert len(photos.searchPhotos(title=title))
 
 
 def test_library_PhotoSection_recentlyAdded(photos, photoalbum):
@@ -805,3 +847,69 @@ def _do_test_library_search(library, obj, field, operator, searchValue):
         assert obj not in results
     else:
         assert obj in results
+
+
+def test_library_common(movies):
+    items = movies.all()
+    common = movies.common(items)
+    assert common.commonType == "movie"
+    assert common.ratingKeys == [m.ratingKey for m in items]
+    assert common.items() == items
+
+
+def test_library_multiedit(movies, tvshows):
+    movie1, movie2 = movies.all()[:2]
+    show1, show2 = tvshows.all()[:2]
+
+    movie1_title = movie1.title
+    movie2_title = movie2.title
+    show1_title = show1.title
+
+    # Edit multiple titles
+    title = "Test Title"
+    movies.multiEdit([movie1, movie2], **{"title.value": title})
+    assert movie1.reload().title == title
+    assert movie2.reload().title == title
+
+    # Reset titles
+    movie1.editTitle(movie1_title, locked=False).reload()
+    movie2.editTitle(movie2_title, locked=False).reload()
+    assert movie1.title == movie1_title
+    assert movie2.title == movie2_title
+
+    # Test batch multi-editing
+    genre = "Test Genre"
+    tvshows.batchMultiEdits([show1, show2]).addGenre(genre).saveMultiEdits()
+    assert genre in [g.tag for g in show1.reload().genres]
+    assert genre in [g.tag for g in show2.reload().genres]
+
+    # Reset genres
+    tvshows.batchMultiEdits([show1, show2]).removeGenre(genre, locked=False).saveMultiEdits()
+    assert genre not in [g.tag for g in show1.reload().genres]
+    assert genre not in [g.tag for g in show2.reload().genres]
+
+    # Test multi-editing with a single item
+    tvshows.batchMultiEdits(show1).editTitle(title).saveMultiEdits()
+    assert show1.reload().title == title
+
+    # Reset title
+    show1.editTitle(show1_title, locked=False).reload()
+    assert show1.title == show1_title
+
+
+def test_library_multiedit_exceptions(music, artist, album, photos):
+    with pytest.raises(BadRequest):
+        music.multiEdit([])
+    with pytest.raises(BadRequest):
+        music.multiEdit([artist, album])
+    with pytest.raises(BadRequest):
+        photos.batchMultiEdits(artist)
+    with pytest.raises(BadRequest):
+        photos.saveMultiEdits()
+
+    with pytest.raises(AttributeError):
+        photos.editTitle("test")
+    with pytest.raises(AttributeError):
+        music.batchMultiEdits(artist).editEdition("test")
+    with pytest.raises(AttributeError):
+        music.batchMultiEdits(album).addCountry("test")

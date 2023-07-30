@@ -30,9 +30,11 @@ def test_photo_Photoalbum_mixins_rating(photoalbum):
 
 
 def test_photo_Photoalbum_mixins_fields(photoalbum):
+    test_mixins.edit_added_at(photoalbum)
     test_mixins.edit_sort_title(photoalbum)
     test_mixins.edit_summary(photoalbum)
     test_mixins.edit_title(photoalbum)
+    test_mixins.edit_user_rating(photoalbum)
 
 
 def test_photo_Photoalbum_PlexWebURL(plex, photoalbum):
@@ -49,10 +51,12 @@ def test_photo_Photo_mixins_rating(photo):
 
 
 def test_photo_Photo_mixins_fields(photo):
+    test_mixins.edit_added_at(photo)
     test_mixins.edit_sort_title(photo)
     test_mixins.edit_summary(photo)
     test_mixins.edit_title(photo)
     test_mixins.edit_photo_captured_time(photo)
+    test_mixins.edit_user_rating(photo)
 
 
 def test_photo_Photo_mixins_tags(photo):

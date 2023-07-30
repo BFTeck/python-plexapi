@@ -17,7 +17,8 @@ def test_audio_Artist_attr(artist):
     if artist.countries:
         assert "United States of America" in [i.tag for i in artist.countries]
     # assert "Electronic" in [i.tag for i in artist.genres]
-    assert utils.is_string(artist.guid, gte=5)
+    assert artist.guid == "plex://artist/5d07bdaf403c64029060f8c4"
+    assert "mbid://069a1c1f-14eb-4d36-b0a0-77dffbd67713" in [i.id for i in artist.guids]
     assert artist.index == 1
     assert utils.is_metadata(artist._initpath)
     assert utils.is_metadata(artist.key)
@@ -105,9 +106,11 @@ def test_audio_Artist_mixins_rating(artist):
 
 
 def test_audio_Artist_mixins_fields(artist):
+    test_mixins.edit_added_at(artist)
     test_mixins.edit_sort_title(artist)
     test_mixins.edit_summary(artist)
     test_mixins.edit_title(artist)
+    test_mixins.edit_user_rating(artist)
 
 
 def test_audio_Artist_mixins_tags(artist):
@@ -144,6 +147,8 @@ def test_audio_Album_attrs(album):
         assert utils.is_art(album.art)
     assert isinstance(album.formats, list)
     assert isinstance(album.genres, list)
+    assert album.guid == "plex://album/5d07c7e5403c640290bb5bfc"
+    assert "mbid://80b4a679-a2a4-4d18-835d-3e081185d7ba" in [i.id for i in album.guids]
     assert album.index == 1
     assert utils.is_metadata(album._initpath)
     assert utils.is_metadata(album.key)
@@ -188,19 +193,20 @@ def test_audio_Album_tracks(album):
     assert len(tracks) == 1
 
 
-def test_audio_Album_track(album, track=None):
-    # this is not reloaded. its not that much info missing.
-    track = track or album.track("As Colourful As Ever")
-    track2 = album.track(track=1)
-    assert track == track2
+def test_audio_Album_track(album):
+    track = album.track("As Colourful as Ever")
+    assert track.title == "As Colourful as Ever"
+    track = album.track(track=1)
+    assert track.index == 1
+    track = album.track(1)
+    assert track.index == 1
     with pytest.raises(BadRequest):
         album.track()
 
 
 def test_audio_Album_get(album):
-    # alias for album.track()
-    track = album.get("As Colourful As Ever")
-    test_audio_Album_track(album, track=track)
+    track = album.get("As Colourful as Ever")
+    assert track.title == "As Colourful as Ever"
 
 
 def test_audio_Album_artist(album):
@@ -227,11 +233,13 @@ def test_audio_Album_mixins_rating(album):
 
 
 def test_audio_Album_mixins_fields(album):
+    test_mixins.edit_added_at(album)
     test_mixins.edit_originally_available(album)
     test_mixins.edit_sort_title(album)
     test_mixins.edit_studio(album)
     test_mixins.edit_summary(album)
     test_mixins.edit_title(album)
+    test_mixins.edit_user_rating(album)
 
 
 def test_audio_Album_mixins_tags(album):
@@ -274,7 +282,8 @@ def test_audio_Track_attrs(album):
     if track.grandparentThumb:
         assert utils.is_thumb(track.grandparentThumb)
     assert track.grandparentTitle == "Broke For Free"
-    assert track.guid.startswith("mbid://") or track.guid.startswith("plex://track/")
+    assert track.guid == "plex://track/5d07e453403c6402907b80aa"
+    assert "mbid://6524bc2d-3f58-4afa-9e06-00a651f5d813" in [i.id for i in track.guids]
     assert track.hasSonicAnalysis is False
     assert track.index == 1
     assert track.trackNumber == track.index
@@ -298,22 +307,19 @@ def test_audio_Track_attrs(album):
     assert track.parentTitle == "Layers"
     assert track.playlistItemID is None
     assert track.primaryExtraKey is None
-    assert utils.is_int(track.ratingCount) or track.ratingCount is None
+    assert track.ratingCount is None or utils.is_int(track.ratingCount)
     assert utils.is_int(track.ratingKey)
     assert track._server._baseurl == utils.SERVER_BASEURL
-    assert track.sessionKey is None
     assert track.skipCount is None
     assert track.summary == ""
     if track.thumb:
         assert utils.is_thumb(track.thumb)
     assert track.title == "As Colourful as Ever"
     assert track.titleSort == "As Colourful as Ever"
-    assert not track.transcodeSessions
     assert track.type == "track"
     assert utils.is_datetime(track.updatedAt)
     assert utils.is_int(track.viewCount, gte=0)
     assert track.viewOffset == 0
-    assert track.viewedAt is None
     assert track.year is None
     assert track.url(None) is None
     assert media.aspectRatio is None
@@ -398,10 +404,12 @@ def test_audio_Track_mixins_rating(track):
 
 
 def test_audio_Track_mixins_fields(track):
+    test_mixins.edit_added_at(track)
     test_mixins.edit_title(track)
     test_mixins.edit_track_artist(track)
     test_mixins.edit_track_number(track)
     test_mixins.edit_track_disc_number(track)
+    test_mixins.edit_user_rating(track)
 
 
 def test_audio_Track_mixins_tags(track):

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import base64
 import functools
+import json
 import logging
 import os
 import re
@@ -9,13 +10,16 @@ import time
 import unicodedata
 import warnings
 import zipfile
+from collections import deque
 from datetime import datetime
 from getpass import getpass
 from threading import Event, Thread
 from urllib.parse import quote
+from requests.status_codes import _codes as codes
 
 import requests
-from plexapi.exceptions import BadRequest, NotFound
+
+from plexapi.exceptions import BadRequest, NotFound, Unauthorized
 
 try:
     from tqdm import tqdm
@@ -25,10 +29,70 @@ except ImportError:
 log = logging.getLogger('plexapi')
 
 # Search Types - Plex uses these to filter specific media types when searching.
-# Library Types - Populated at runtime
-SEARCHTYPES = {'movie': 1, 'show': 2, 'season': 3, 'episode': 4, 'trailer': 5, 'comic': 6, 'person': 7,
-               'artist': 8, 'album': 9, 'track': 10, 'picture': 11, 'clip': 12, 'photo': 13, 'photoalbum': 14,
-               'playlist': 15, 'playlistFolder': 16, 'collection': 18, 'optimizedVersion': 42, 'userPlaylistItem': 1001}
+SEARCHTYPES = {
+    'movie': 1,
+    'show': 2,
+    'season': 3,
+    'episode': 4,
+    'trailer': 5,
+    'comic': 6,
+    'person': 7,
+    'artist': 8,
+    'album': 9,
+    'track': 10,
+    'picture': 11,
+    'clip': 12,
+    'photo': 13,
+    'photoalbum': 14,
+    'playlist': 15,
+    'playlistFolder': 16,
+    'collection': 18,
+    'optimizedVersion': 42,
+    'userPlaylistItem': 1001,
+}
+REVERSESEARCHTYPES = {v: k for k, v in SEARCHTYPES.items()}
+
+# Tag Types - Plex uses these to filter specific tags when searching.
+TAGTYPES = {
+    'tag': 0,
+    'genre': 1,
+    'collection': 2,
+    'director': 4,
+    'writer': 5,
+    'role': 6,
+    'producer': 7,
+    'country': 8,
+    'chapter': 9,
+    'review': 10,
+    'label': 11,
+    'marker': 12,
+    'mediaProcessingTarget': 42,
+    'make': 200,
+    'model': 201,
+    'aperture': 202,
+    'exposure': 203,
+    'iso': 204,
+    'lens': 205,
+    'device': 206,
+    'autotag': 207,
+    'mood': 300,
+    'style': 301,
+    'format': 302,
+    'similar': 305,
+    'concert': 306,
+    'banner': 311,
+    'poster': 312,
+    'art': 313,
+    'guid': 314,
+    'ratingImage': 316,
+    'theme': 317,
+    'studio': 318,
+    'network': 319,
+    'place': 400,
+}
+REVERSETAGTYPES = {v: k for k, v in TAGTYPES.items()}
+
+# Plex Objects - Populated at runtime
 PLEXOBJECTS = {}
 
 
@@ -39,7 +103,7 @@ class SecretsFilter(logging.Filter):
         self.secrets = secrets or set()
 
     def add_secret(self, secret):
-        if secret is not None:
+        if secret is not None and secret != '':
             self.secrets.add(secret)
         return secret
 
@@ -59,10 +123,14 @@ def registerPlexObject(cls):
         buildItem() below for an example.
     """
     etype = getattr(cls, 'STREAMTYPE', getattr(cls, 'TAGTYPE', cls.TYPE))
-    ehash = '%s.%s' % (cls.TAG, etype) if etype else cls.TAG
+    ehash = f'{cls.TAG}.{etype}' if etype else cls.TAG
+    if getattr(cls, '_SESSIONTYPE', None):
+        ehash = f"{ehash}.session"
+    elif getattr(cls, '_HISTORYTYPE', None):
+        ehash = f"{ehash}.history"
     if ehash in PLEXOBJECTS:
-        raise Exception('Ambiguous PlexObject definition %s(tag=%s, type=%s) with %s' %
-            (cls.__name__, cls.TAG, etype, PLEXOBJECTS[ehash].__name__))
+        raise Exception(f'Ambiguous PlexObject definition {cls.__name__}(tag={cls.TAG}, type={etype}) '
+                        f'with {PLEXOBJECTS[ehash].__name__}')
     PLEXOBJECTS[ehash] = cls
     return cls
 
@@ -105,8 +173,8 @@ def joinArgs(args):
     arglist = []
     for key in sorted(args, key=lambda x: x.lower()):
         value = str(args[key])
-        arglist.append('%s=%s' % (key, quote(value, safe='')))
-    return '?%s' % '&'.join(arglist)
+        arglist.append(f"{key}={quote(value, safe='')}")
+    return f"?{'&'.join(arglist)}"
 
 
 def lowerFirst(s):
@@ -148,18 +216,18 @@ def searchType(libtype):
     """ Returns the integer value of the library string type.
 
         Parameters:
-            libtype (str): LibType to lookup (movie, show, season, episode, artist, album, track,
-                                              collection)
+            libtype (str): LibType to lookup (See :data:`~plexapi.utils.SEARCHTYPES`)
 
         Raises:
             :exc:`~plexapi.exceptions.NotFound`: Unknown libtype
     """
     libtype = str(libtype)
-    if libtype in [str(v) for v in SEARCHTYPES.values()]:
-        return libtype
-    if SEARCHTYPES.get(libtype) is not None:
+    try:
         return SEARCHTYPES[libtype]
-    raise NotFound('Unknown libtype: %s' % libtype)
+    except KeyError:
+        if libtype in [str(k) for k in REVERSESEARCHTYPES]:
+            return libtype
+        raise NotFound(f'Unknown libtype: {libtype}') from None
 
 
 def reverseSearchType(libtype):
@@ -171,13 +239,47 @@ def reverseSearchType(libtype):
         Raises:
             :exc:`~plexapi.exceptions.NotFound`: Unknown libtype
     """
-    if libtype in SEARCHTYPES:
-        return libtype
-    libtype = int(libtype)
-    for k, v in SEARCHTYPES.items():
-        if libtype == v:
-            return k
-    raise NotFound('Unknown libtype: %s' % libtype)
+    try:
+        return REVERSESEARCHTYPES[int(libtype)]
+    except (KeyError, ValueError):
+        if libtype in SEARCHTYPES:
+            return libtype
+        raise NotFound(f'Unknown libtype: {libtype}') from None
+
+
+def tagType(tag):
+    """ Returns the integer value of the library tag type.
+
+        Parameters:
+            tag (str): Tag to lookup (See :data:`~plexapi.utils.TAGTYPES`)
+
+        Raises:
+            :exc:`~plexapi.exceptions.NotFound`: Unknown tag
+    """
+    tag = str(tag)
+    try:
+        return TAGTYPES[tag]
+    except KeyError:
+        if tag in [str(k) for k in REVERSETAGTYPES]:
+            return tag
+        raise NotFound(f'Unknown tag: {tag}') from None
+
+
+def reverseTagType(tag):
+    """ Returns the string value of the library tag type.
+
+        Parameters:
+            tag (int): Integer value of the library tag type.
+
+        Raises:
+            :exc:`~plexapi.exceptions.NotFound`: Unknown tag
+    """
+    try:
+        return REVERSETAGTYPES[int(tag)]
+    except (KeyError, ValueError):
+        if tag in TAGTYPES:
+            return tag
+        raise NotFound(f'Unknown tag: {tag}') from None
 
 
 def threaded(callback, listargs):
@@ -194,7 +296,7 @@ def threaded(callback, listargs):
         args += [results, len(results)]
         results.append(None)
         threads.append(Thread(target=callback, args=args, kwargs=dict(job_is_done_event=job_is_done_event)))
-        threads[-1].setDaemon(True)
+        threads[-1].daemon = True
         threads[-1].start()
     while not job_is_done_event.is_set():
         if all(not t.is_alive() for t in threads):
@@ -254,7 +356,7 @@ def toList(value, itemcast=None, delim=','):
 
 
 def cleanFilename(filename, replace='_'):
-    whitelist = "-_.()[] {}{}".format(string.ascii_letters, string.digits)
+    whitelist = f"-_.()[] {string.ascii_letters}{string.digits}"
     cleaned_filename = unicodedata.normalize('NFKD', filename).encode('ASCII', 'ignore').decode()
     cleaned_filename = ''.join(c if c in whitelist else replace for c in cleaned_filename)
     return cleaned_filename
@@ -282,18 +384,18 @@ def downloadSessionImages(server, filename=None, height=150, width=150,
             if media.thumb:
                 url = media.thumb
             if part.indexes:  # always use bif images if available.
-                url = '/library/parts/%s/indexes/%s/%s' % (part.id, part.indexes.lower(), media.viewOffset)
+                url = f'/library/parts/{part.id}/indexes/{part.indexes.lower()}/{media.viewOffset}'
         if url:
             if filename is None:
                 prettyname = media._prettyfilename()
-                filename = 'session_transcode_%s_%s_%s' % (media.usernames[0], prettyname, int(time.time()))
+                filename = f'session_transcode_{media.usernames[0]}_{prettyname}_{int(time.time())}'
             url = server.transcodeImage(url, height, width, opacity, saturation)
-            filepath = download(url, filename=filename)
+            filepath = download(url, server._token, filename=filename)
             info['username'] = {'filepath': filepath, 'url': url}
     return info
 
 
-def download(url, token, filename=None, savepath=None, session=None, chunksize=4024,
+def download(url, token, filename=None, savepath=None, session=None, chunksize=4024,   # noqa: C901
              unpack=False, mocked=False, showstatus=False):
     """ Helper to download a thumb, videofile or other media item. Returns the local
         path to the downloaded file.
@@ -304,7 +406,7 @@ def download(url, token, filename=None, savepath=None, session=None, chunksize=4
             filename (str): Filename of the downloaded file, default None.
             savepath (str): Defaults to current working dir.
             chunksize (int): What chunksize read/write at the time.
-            mocked (bool): Helper to do evertything except write the file.
+            mocked (bool): Helper to do everything except write the file.
             unpack (bool): Unpack the zip file.
             showstatus(bool): Display a progressbar.
 
@@ -316,6 +418,17 @@ def download(url, token, filename=None, savepath=None, session=None, chunksize=4
     session = session or requests.Session()
     headers = {'X-Plex-Token': token}
     response = session.get(url, headers=headers, stream=True)
+    if response.status_code not in (200, 201, 204):
+        codename = codes.get(response.status_code)[0]
+        errtext = response.text.replace('\n', ' ')
+        message = f'({response.status_code}) {codename}; {response.url} {errtext}'
+        if response.status_code == 401:
+            raise Unauthorized(message)
+        elif response.status_code == 404:
+            raise NotFound(message)
+        else:
+            raise BadRequest(message)
+
     # make sure the savepath directory exists
     savepath = savepath or os.getcwd()
     os.makedirs(savepath, exist_ok=True)
@@ -373,13 +486,13 @@ def getMyPlexAccount(opts=None):  # pragma: no cover
     from plexapi.myplex import MyPlexAccount
     # 1. Check command-line options
     if opts and opts.username and opts.password:
-        print('Authenticating with Plex.tv as %s..' % opts.username)
+        print(f'Authenticating with Plex.tv as {opts.username}..')
         return MyPlexAccount(opts.username, opts.password)
     # 2. Check Plexconfig (environment variables and config.ini)
     config_username = CONFIG.get('auth.myplex_username')
     config_password = CONFIG.get('auth.myplex_password')
     if config_username and config_password:
-        print('Authenticating with Plex.tv as %s..' % config_username)
+        print(f'Authenticating with Plex.tv as {config_username}..')
         return MyPlexAccount(config_username, config_password)
     config_token = CONFIG.get('auth.server_token')
     if config_token:
@@ -388,12 +501,12 @@ def getMyPlexAccount(opts=None):  # pragma: no cover
     # 3. Prompt for username and password on the command line
     username = input('What is your plex.tv username: ')
     password = getpass('What is your plex.tv password: ')
-    print('Authenticating with Plex.tv as %s..' % username)
+    print(f'Authenticating with Plex.tv as {username}..')
     return MyPlexAccount(username, password)
 
 
 def createMyPlexDevice(headers, account, timeout=10):  # pragma: no cover
-    """ Helper function to create a new MyPlexDevice.
+    """ Helper function to create a new MyPlexDevice. Returns a new MyPlexDevice instance.
 
         Parameters:
             headers (dict): Provide the X-Plex- headers for the new device.
@@ -416,6 +529,33 @@ def createMyPlexDevice(headers, account, timeout=10):  # pragma: no cover
     return account.device(clientId=clientIdentifier)
 
 
+def plexOAuth(headers, forwardUrl=None, timeout=120):  # pragma: no cover
+    """ Helper function for Plex OAuth login. Returns a new MyPlexAccount instance.
+
+        Parameters:
+            headers (dict): Provide the X-Plex- headers for the new device.
+                A unique X-Plex-Client-Identifier is required.
+            forwardUrl (str, optional): The url to redirect the client to after login.
+            timeout (int, optional): Timeout in seconds to wait for device login. Default 120 seconds.
+    """
+    from plexapi.myplex import MyPlexAccount, MyPlexPinLogin
+
+    if 'X-Plex-Client-Identifier' not in headers:
+        raise BadRequest('The X-Plex-Client-Identifier header is required.')
+
+    pinlogin = MyPlexPinLogin(headers=headers, oauth=True)
+    print('Login to Plex at the following url:')
+    print(pinlogin.oauthUrl(forwardUrl))
+    pinlogin.run(timeout=timeout)
+    pinlogin.waitForLogin()
+
+    if pinlogin.token:
+        print('Login successful!')
+        return MyPlexAccount(token=pinlogin.token)
+    else:
+        print('Login failed.')
+
+
 def choose(msg, items, attr):  # pragma: no cover
     """ Command line helper to display a list of choices, asking the
         user to choose one of the options.
@@ -427,12 +567,12 @@ def choose(msg, items, attr):  # pragma: no cover
     print()
     for index, i in enumerate(items):
         name = attr(i) if callable(attr) else getattr(i, attr)
-        print('  %s: %s' % (index, name))
+        print(f'  {index}: {name}')
     print()
     # Request choice from the user
     while True:
         try:
-            inp = input('%s: ' % msg)
+            inp = input(f'{msg}: ')
             if any(s in inp for s in (':', '::', '-')):
                 idx = slice(*map(lambda x: int(x.strip()) if x.strip() else None, inp.split(':')))
                 return items[idx]
@@ -451,8 +591,7 @@ def getAgentIdentifier(section, agent):
         if agent in identifiers:
             return ag.identifier
         agents += identifiers
-    raise NotFound('Could not find "%s" in agents list (%s)' %
-                   (agent, ', '.join(agents)))
+    raise NotFound(f"Could not find \"{agent}\" in agents list ({', '.join(agents)})")
 
 
 def base64str(text):
@@ -466,9 +605,42 @@ def deprecated(message, stacklevel=2):
         when the function is used."""
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            msg = 'Call to deprecated function or method "%s", %s.' % (func.__name__, message)
+            msg = f'Call to deprecated function or method "{func.__name__}", {message}.'
             warnings.warn(msg, category=DeprecationWarning, stacklevel=stacklevel)
             log.warning(msg)
             return func(*args, **kwargs)
         return wrapper
     return decorator
+
+
+def iterXMLBFS(root, tag=None):
+    """ Iterate through an XML tree using a breadth-first search.
+        If tag is specified, only return nodes with that tag.
+    """
+    queue = deque([root])
+    while queue:
+        node = queue.popleft()
+        if tag is None or node.tag == tag:
+            yield node
+        queue.extend(list(node))
+
+
+def toJson(obj, **kwargs):
+    """ Convert an object to a JSON string.
+
+        Parameters:
+            obj (object): The object to convert.
+            **kwargs (dict): Keyword arguments to pass to ``json.dumps()``.
+    """
+    def serialize(obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
+    return json.dumps(obj, default=serialize, **kwargs)
+
+
+def openOrRead(file):
+    if hasattr(file, 'read'):
+        return file.read()
+    with open(file, 'rb') as f:
+        return f.read()
