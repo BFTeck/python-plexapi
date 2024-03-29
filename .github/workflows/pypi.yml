@@ -17,10 +17,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ env.DEFAULT_PYTHON }}
 
@@ -28,11 +28,16 @@ jobs:
       run: |
         pip install -U pip
         pip install -r requirements.txt
-        pip install setuptools wheel
+        pip install setuptools twine wheel
         python setup.py sdist bdist_wheel
 
+    - name: Verify README
+      # https://packaging.python.org/guides/making-a-pypi-friendly-readme/#validating-restructuredtext-markup
+      run: |
+        python -m twine check dist/*
+
     - name: Upload builds
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: dist
         path: dist
@@ -48,7 +53,7 @@ jobs:
       id-token: write
     steps:
     - name: Download builds
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
 
     - name: Publish to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1

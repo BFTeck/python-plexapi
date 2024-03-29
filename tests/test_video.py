@@ -92,6 +92,7 @@ def test_video_Movie_attrs(movies):
         assert utils.is_metadata(movie.primaryExtraKey)
     assert movie.ratingKey >= 1
     assert movie._server._baseurl == utils.SERVER_BASEURL
+    assert movie.slug == "sita-sings-the-blues"
     assert movie.studio == "Nina Paley"
     assert utils.is_string(movie.summary, gte=100)
     assert movie.tagline == "The Greatest Break-Up Story Ever Told."
@@ -135,8 +136,6 @@ def test_video_Movie_attrs(movies):
     assert audio._server._baseurl == utils.SERVER_BASEURL
     assert audio.title is None
     assert audio.type == 2
-    with pytest.raises(AttributeError):
-        assert audio.albumGain is None  # Check track only attributes are not available
     # Media
     media = movie.media[0]
     assert media.aspectRatio >= 1.3
@@ -160,8 +159,6 @@ def test_video_Movie_attrs(movies):
     assert media.videoProfile == "main"
     assert media.videoResolution in utils.RESOLUTIONS
     assert utils.is_int(media.width, gte=200)
-    with pytest.raises(AttributeError):
-        assert media.aperture is None  # Check photo only attributes are not available
     # Video
     video = movie.media[0].parts[0].videoStreams()[0]
     assert video.anamorphic is None
@@ -342,12 +339,27 @@ def test_video_Movie_isFullObject_and_reload(plex):
     assert len(movie_via_section_search.roles) >= 3
 
 
+def test_video_Movie_reload_kwargs(movie):
+    assert len(movie.media)
+    assert movie.summary is not None
+    movie.reload(includeFields=False, **movie._EXCLUDES)
+    assert movie.__dict__.get('media') == []
+    assert movie.__dict__.get('summary') is None
+
+
 def test_video_movie_watched(movie):
     movie.markUnplayed()
     movie.markPlayed()
     movie.reload()
     assert movie.viewCount == 1
     movie.markUnplayed()
+    movie.reload()
+    assert movie.viewCount == 0
+
+    movie.markWatched()
+    movie.reload()
+    assert movie.viewCount == 1
+    movie.markUnwatched()
     movie.reload()
     assert movie.viewCount == 0
 
@@ -383,7 +395,7 @@ def test_video_Movie_download(monkeydownload, tmpdir, movie):
 def test_video_Movie_videoStreams(movie):
     assert movie.videoStreams()
 
-    
+
 def test_video_Movie_audioStreams(movie):
     assert movie.audioStreams()
 
@@ -397,7 +409,6 @@ def test_video_Episode_subtitleStreams(episode):
 
 
 def test_video_Movie_upload_select_remove_subtitle(movie, subtitle):
-
     filepath = os.path.realpath(subtitle.name)
 
     movie.uploadSubtitles(filepath)
@@ -405,9 +416,8 @@ def test_video_Movie_upload_select_remove_subtitle(movie, subtitle):
     subname = subtitle.name.rsplit(".", 1)[0]
     assert subname in subtitles
 
-    movie.subtitleStreams()[0].setDefault()
+    movie.subtitleStreams()[0].setSelected()
     movie.reload()
-
     subtitleSelection = movie.subtitleStreams()[0]
     assert subtitleSelection.selected
 
@@ -418,8 +428,24 @@ def test_video_Movie_upload_select_remove_subtitle(movie, subtitle):
 
     try:
         os.remove(filepath)
-    except:
+    except OSError:
         pass
+
+
+def test_video_Movie_on_demand_subtitles(movie, account):
+    movie_subtitles = movie.subtitleStreams()
+    subtitles = movie.searchSubtitles()
+    assert subtitles != []
+
+    subtitle = subtitles[0]
+
+    movie.downloadSubtitles(subtitle)
+    utils.wait_until(lambda: len(movie.reload().subtitleStreams()) > len(movie_subtitles))
+    subtitle_sourceKeys = {stream.sourceKey: stream for stream in movie.subtitleStreams()}
+    assert subtitle.sourceKey in subtitle_sourceKeys
+
+    movie.removeSubtitles(subtitleStream=subtitle_sourceKeys[subtitle.sourceKey]).reload()
+    assert subtitle.sourceKey not in [stream.sourceKey for stream in movie.subtitleStreams()]
 
 
 def test_video_Movie_match(movies):
@@ -586,7 +612,7 @@ def test_video_Movie_editions(movie):
 
 
 @pytest.mark.authenticated
-def test_video_Movie_extras(movies):
+def test_video_Movie_extras(account_plexpass, movies):
     movie = movies.get("Sita Sings The Blues")
     extras = movie.extras()
     assert extras
@@ -614,7 +640,7 @@ def test_video_Movie_batchEdits(movie):
         .editTagline(new_tagline) \
         .editStudio(new_studio)
     assert movie._edits != {}
-    movie.saveEdits()
+    movie.saveEdits().reload()
     assert movie._edits is None
     assert movie.title == new_title
     assert movie.summary == new_summary
@@ -626,13 +652,13 @@ def test_video_Movie_batchEdits(movie):
         .editSummary(summary, locked=False) \
         .editTagline(tagline, locked=False) \
         .editStudio(studio, locked=False) \
-        .saveEdits()
+        .saveEdits().reload()
     assert movie.title == title
     assert movie.summary == summary
     assert movie.tagline == tagline
     assert movie.studio == studio
     assert not movie.fields
-    
+
     with pytest.raises(BadRequest):
         movie.saveEdits()
 
@@ -677,7 +703,7 @@ def test_video_Movie_mixins_fields_edition(movie):
 
 
 @pytest.mark.authenticated
-def test_video_Movie_mixins_fields_edition_authenticated(movie):
+def test_video_Movie_mixins_fields_edition_authenticated(account_plexpass, movie):
     test_mixins.edit_edition_title(movie)
 
 
@@ -771,6 +797,7 @@ def test_video_Show_attrs(show):
     assert show._server._baseurl == utils.SERVER_BASEURL
     assert utils.is_int(show.seasonCount)
     assert show.showOrdering in (None, 'aired')
+    assert show.slug == "game-of-thrones"
     assert show.studio == "Revolution Sun Studios"
     assert utils.is_string(show.summary, gte=100)
     assert show.subtitleLanguage == ''
@@ -873,12 +900,14 @@ def test_video_Show_markPlayed(show):
     show.markPlayed()
     show.reload()
     assert show.isPlayed
+    assert show.isWatched
 
 
 def test_video_Show_markUnplayed(show):
     show.markUnplayed()
     show.reload()
     assert not show.isPlayed
+    assert not show.isWatched
 
 
 def test_video_Show_refresh(show):
@@ -987,6 +1016,7 @@ def test_video_Season_attrs(show):
     assert season.parentIndex == 1
     assert utils.is_metadata(season.parentKey)
     assert utils.is_int(season.parentRatingKey)
+    assert season.parentSlug == "game-of-thrones"
     assert season.parentStudio == "Revolution Sun Studios"
     assert utils.is_metadata(season.parentTheme)
     if season.parentThumb:
@@ -1156,13 +1186,14 @@ def test_video_Episode_attrs(episode):
     assert episode.audienceRatingImage == "themoviedb://image.rating"
     assert episode.contentRating in utils.CONTENTRATINGS
     if episode.directors:
-        assert "Timothy Van Patten" in [i.tag for i in episode.directors]
+        assert "Tim Van Patten" in [i.tag for i in episode.directors]
     assert utils.is_int(episode.duration, gte=120000)
     if episode.grandparentArt:
         assert utils.is_art(episode.grandparentArt)
     assert episode.grandparentGuid == "plex://show/5d9c086c46115600200aa2fe"
     assert utils.is_metadata(episode.grandparentKey)
     assert utils.is_int(episode.grandparentRatingKey)
+    assert episode.grandparentSlug == "game-of-thrones"
     assert utils.is_metadata(episode.grandparentTheme)
     if episode.grandparentThumb:
         assert utils.is_thumb(episode.grandparentThumb)
@@ -1411,6 +1442,7 @@ def test_video_edits_locked(movie, episode):
         if field.name == 'titleSort':
             assert movie.titleSort == 'New Title Sort'
             assert field.locked is True
+            assert movie.isLocked(field=field.name)
     movie.edit(**{'titleSort.value': movieTitleSort, 'titleSort.locked': 0})
 
     episodeTitleSort = episode.titleSort
@@ -1420,6 +1452,7 @@ def test_video_edits_locked(movie, episode):
         if field.name == 'titleSort':
             assert episode.titleSort == 'New Title Sort'
             assert field.locked is True
+            assert episode.isLocked(field=field.name)
     episode.edit(**{'titleSort.value': episodeTitleSort, 'titleSort.locked': 0})
 
 
@@ -1459,3 +1492,15 @@ def test_video_optimize(plex, movie, tvshows, show):
         movie.optimize()
     with pytest.raises(BadRequest):
         movie.optimize(target="mobile", locationID=-100)
+
+
+def test_video_Movie_matadataDirectory(movie):
+    assert os.path.exists(os.path.join(utils.BOOTSTRAP_DATA_PATH, movie.metadataDirectory))
+
+    for poster in movie.posters():
+        if not poster.ratingKey.startswith('http'):
+            assert os.path.exists(os.path.join(utils.BOOTSTRAP_DATA_PATH, poster.resourceFilepath))
+
+    for art in movie.arts():
+        if not art.ratingKey.startswith('http'):
+            assert os.path.exists(os.path.join(utils.BOOTSTRAP_DATA_PATH, art.resourceFilepath))

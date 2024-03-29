@@ -31,8 +31,12 @@ setup(
     url='https://github.com/pkkid/python-plexapi',
     packages=['plexapi'],
     install_requires=requirements,
+    extras_require={
+        'alert': ["websocket-client>=1.3.3"],
+    },
     python_requires='>=3.8',
     long_description=readme,
+    long_description_content_type='text/x-rst',
     keywords=['plex', 'api'],
     classifiers=[
         'Operating System :: OS Independent',

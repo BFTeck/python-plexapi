@@ -20,17 +20,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Check out code from Github
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python ${{ env.DEFAULT_PYTHON }}
       id: python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ env.DEFAULT_PYTHON }}
 
     - name: Restore Python ${{ steps.python.outputs.python-version }} virtual environment
       id: cache-venv
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: venv
         key: >-
@@ -54,9 +54,13 @@ jobs:
       run: |
         . venv/bin/activate
         # stop the build if there are Python syntax errors or undefined names
-        flake8 plexapi --count --select=E9,F63,F7,F82 --show-source --statistics
+        echo "::group::flake8 pass 1"
+        flake8 --count --select=E9,F63,F7,F82 --show-source --statistics
+        echo "::endgroup::"
         # The GitHub editor is 127 chars wide
-        flake8 plexapi --count --max-complexity=12 --max-line-length=127 --statistics
+        echo "::group::flake8 pass 2"
+        flake8 --count --max-complexity=12 --max-line-length=127 --statistics
+        echo "::endgroup::"
 
 
   pytest:
@@ -65,6 +69,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PLEXAPI_AUTH_SERVER_BASEURL: http://127.0.0.1:32400
+      PLEXAPI_PLEXAPI_TIMEOUT: "60"
       PLEX_CONTAINER: plexinc/pms-docker
       PLEX_CONTAINER_TAG: latest
     strategy:
@@ -79,17 +84,17 @@ jobs:
             plex: claimed
     steps:
     - name: Check out code from Github
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python ${{ env.DEFAULT_PYTHON }}
       id: python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ env.DEFAULT_PYTHON }}
 
     - name: Restore Python ${{ steps.python.outputs.python-version }} virtual environment
       id: cache-venv
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: venv
         key: >-
@@ -130,7 +135,7 @@ jobs:
 
     - name: Cache PMS Docker image
       id: docker-cache
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cache/docker/plexinc
         key: ${{ runner.os }}-docker-pms-${{ steps.docker-digest.outputs.digest }}
@@ -153,15 +158,26 @@ jobs:
         echo "PLEXAPI_AUTH_SERVER_TOKEN=${{ secrets.PLEXAPI_AUTH_SERVER_TOKEN }}" >> $GITHUB_ENV
 
     - name: Bootstrap ${{ matrix.plex }} Plex server
-      run: |
-        . venv/bin/activate
-        python \
-          -u tools/plex-bootstraptest.py \
-          --destination plex \
-          --advertise-ip 127.0.0.1 \
-          --bootstrap-timeout 540 \
-          --docker-tag ${{ env.PLEX_CONTAINER_TAG }} \
-          --${{ matrix.plex }}
+      uses: nick-fields/retry@v3.0.0
+      with:
+        max_attempts: 3
+        timeout_minutes: 2
+        command: |
+          . venv/bin/activate
+          python \
+            -u tools/plex-bootstraptest.py \
+            --destination plex \
+            --advertise-ip 127.0.0.1 \
+            --bootstrap-timeout 540 \
+            --docker-tag ${{ env.PLEX_CONTAINER_TAG }} \
+            --${{ matrix.plex }}
+        on_retry_command: |
+          if ["${{ matrix.plex }}" == "claimed"]; then
+            python -u tools/plex-teardowntest.py
+          fi
+
+          # remove docker container
+          docker rm -f $(docker ps --latest)
 
     - name: Main tests with ${{ matrix.plex }} server
       env:
@@ -183,7 +199,7 @@ jobs:
         python -u tools/plex-teardowntest.py
 
     - name: Upload coverage artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: coverage-${{ matrix.plex }}-${{ steps.python.outputs.python-version }}
         path: .coverage
@@ -204,17 +220,17 @@ jobs:
             plex: claimed
     steps:
     - name: Check out code from GitHub
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python ${{ env.DEFAULT_PYTHON }}
       id: python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ env.DEFAULT_PYTHON }}
 
     - name: Restore Python ${{ steps.python.outputs.python-version }} virtual environment
       id: cache-venv
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: venv
         key: >-
@@ -227,7 +243,7 @@ jobs:
         fail-on-cache-miss: true
 
     - name: Download all coverage artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
 
     - name: Combine ${{ matrix.plex }} coverage results
       run: |

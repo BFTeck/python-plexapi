@@ -72,6 +72,8 @@ BASE_DIR_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STUB_MOVIE_PATH = os.path.join(BASE_DIR_PATH, "tests", "data", "video_stub.mp4")
 STUB_MP3_PATH = os.path.join(BASE_DIR_PATH, "tests", "data", "audio_stub.mp3")
 STUB_IMAGE_PATH = os.path.join(BASE_DIR_PATH, "tests", "data", "cute_cat.jpg")
+# For the default Docker bootstrap test Plex Media Server data directory
+BOOTSTRAP_DATA_PATH = os.path.join(BASE_DIR_PATH, "plex", "db", "Library", "Application Support", "Plex Media Server")
 
 
 def pytest_addoption(parser):
@@ -141,7 +143,8 @@ def account_once(account):
 def account_plexpass(account):
     if not account.subscriptionActive:
         pytest.skip(
-            "PlexPass subscription is not active, unable to test sync-stuff, be careful!"
+            "PlexPass subscription is not active, unable to test dashboard, movie extras, movie editions, "
+            "sync-stuff, etc... be careful!"
         )
     return account
 

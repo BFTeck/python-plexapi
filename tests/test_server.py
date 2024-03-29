@@ -436,10 +436,10 @@ def test_server_system_devices(plex):
     assert len(device.name) or device.name == ""
     assert len(device.platform) or device.platform == ""
     assert plex.systemDevice(device.id) == device
-    
+
 
 @pytest.mark.authenticated
-def test_server_dashboard_bandwidth(plex):
+def test_server_dashboard_bandwidth(account_plexpass, plex):
     bandwidthData = plex.bandwidth()
     assert len(bandwidthData)
     bandwidth = bandwidthData[0]
@@ -456,7 +456,7 @@ def test_server_dashboard_bandwidth(plex):
 
 
 @pytest.mark.authenticated
-def test_server_dashboard_bandwidth_filters(plex):
+def test_server_dashboard_bandwidth_filters(account_plexpass, plex):
     at = datetime(2021, 1, 1)
     filters = {
         'at>': at,
@@ -566,3 +566,8 @@ def test_server_agents(plex):
     setting = next((s for s in settings if s.id == 'country'), None)
     assert setting
     assert setting.enumValues is not None
+
+
+def test_server_identity(plex):
+    identity = plex.identity()
+    assert identity.machineIdentifier == plex.machineIdentifier

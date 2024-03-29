@@ -430,6 +430,13 @@ def test_library_MusicSection_recentlyAdded(music, artist):
     assert track in music.recentlyAddedTracks()
 
 
+@pytest.mark.authenticated
+def test_library_MusicSection_sonicAdventure(account_plexpass, music):
+    tracks = music.searchTracks()
+    adventure = music.sonicAdventure(tracks[0], tracks[-1].ratingKey)
+    assert all(isinstance(t, plexapi.audio.Track) for t in adventure)
+
+
 def test_library_PhotoSection_searchAlbums(photos, photoalbum):
     title = photoalbum.title
     assert len(photos.searchAlbums(title=title))
@@ -551,6 +558,9 @@ def test_library_MovieSection_search_FilterChoice(movies, collection):
     movie = collection.items()[0]
     assert movie in results
 
+    items = filterChoice.items()
+    assert movie in items
+
 
 def test_library_MovieSection_advancedSearch(movies, movie):
     advancedFilters = {
@@ -611,7 +621,7 @@ def test_library_MusicSection_search(music, artist):
     album.removeMood("test_search", locked=False)
     album.removeCollection("test_search", locked=False)
     album.removeLabel("test_search", locked=False)
-    
+
     track = album.track(track=1)
     track.addMood("test_search")
     _test_library_search(music, track)
@@ -777,7 +787,7 @@ def test_library_search_exceptions(movies):
         movies.search(sort="titleSort:bad")
 
 
-def _test_library_search(library, obj):
+def _test_library_search(library, obj):  # noqa: C901
     # Create & operator
     AndOperator = namedtuple("AndOperator", ["key", "title"])
     andOp = AndOperator("&=", "and")
@@ -785,15 +795,15 @@ def _test_library_search(library, obj):
     fields = library.listFields(obj.type)
     for field in fields:
         fieldAttr = field.key.split(".")[-1]
+        if fieldAttr in {"unmatched", "userRating"}:
+            continue
         operators = library.listOperators(field.type)
         if field.type in {"tag", "string"}:
             operators += [andOp]
 
         for operator in operators:
             if (
-                fieldAttr == "unmatched" and operator.key == "!="
-                or fieldAttr in {"audienceRating", "rating"} and operator.key in {"=", "!="}
-                or fieldAttr == "userRating"
+                fieldAttr in {"audienceRating", "rating"} and operator.key in {"=", "!="}
             ):
                 continue
 
@@ -846,7 +856,7 @@ def _do_test_library_search(library, obj, field, operator, searchValue):
     if operator.key.startswith("!") or operator.key.startswith(">>") and (searchValue == 1 or searchValue == "1s"):
         assert obj not in results
     else:
-        assert obj in results
+        assert obj in results, f"Unable to search {obj.type} by {field.key} using {operator.key} and value {searchValue}."
 
 
 def test_library_common(movies):

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 import re
+from typing import Any, TYPE_CHECKING
+import warnings
+from collections import defaultdict
 from datetime import datetime
 from functools import cached_property
 from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
@@ -13,6 +18,10 @@ from plexapi.mixins import (
 )
 from plexapi.settings import Setting
 from plexapi.utils import deprecated
+
+
+if TYPE_CHECKING:
+    from plexapi.audio import Track
 
 
 class Library(PlexObject):
@@ -41,14 +50,22 @@ class Library(PlexObject):
     def _loadSections(self):
         """ Loads and caches all the library sections. """
         key = '/library/sections'
-        self._sectionsByID = {}
-        self._sectionsByTitle = {}
+        sectionsByID = {}
+        sectionsByTitle = defaultdict(list)
+        libcls = {
+            'movie': MovieSection,
+            'show': ShowSection,
+            'artist': MusicSection,
+            'photo': PhotoSection,
+        }
+
         for elem in self._server.query(key):
-            for cls in (MovieSection, ShowSection, MusicSection, PhotoSection):
-                if elem.attrib.get('type') == cls.TYPE:
-                    section = cls(self._server, elem, key)
-                    self._sectionsByID[section.key] = section
-                    self._sectionsByTitle[section.title.lower().strip()] = section
+            section = libcls.get(elem.attrib.get('type'), LibrarySection)(self._server, elem, initpath=key)
+            sectionsByID[section.key] = section
+            sectionsByTitle[section.title.lower().strip()].append(section)
+
+        self._sectionsByID = sectionsByID
+        self._sectionsByTitle = dict(sectionsByTitle)
 
     def sections(self):
         """ Returns a list of all media sections in this library. Library sections may be any of
@@ -60,17 +77,29 @@ class Library(PlexObject):
 
     def section(self, title):
         """ Returns the :class:`~plexapi.library.LibrarySection` that matches the specified title.
+            Note: Multiple library sections with the same title is ambiguous.
+            Use :func:`~plexapi.library.Library.sectionByID` instead for an exact match.
 
             Parameters:
                 title (str): Title of the section to return.
+
+            Raises:
+                :exc:`~plexapi.exceptions.NotFound`: The library section title is not found on the server.
         """
         normalized_title = title.lower().strip()
         if not self._sectionsByTitle or normalized_title not in self._sectionsByTitle:
             self._loadSections()
         try:
-            return self._sectionsByTitle[normalized_title]
+            sections = self._sectionsByTitle[normalized_title]
         except KeyError:
             raise NotFound(f'Invalid library section: {title}') from None
+
+        if len(sections) > 1:
+            warnings.warn(
+                'Multiple library sections with the same title found, use "sectionByID" instead. '
+                'Returning the last section.'
+            )
+        return sections[-1]
 
     def sectionByID(self, sectionID):
         """ Returns the :class:`~plexapi.library.LibrarySection` that matches the specified sectionID.
@@ -542,7 +571,7 @@ class LibrarySection(PlexObject):
 
     def addLocations(self, location):
         """ Add a location to a library.
-        
+
             Parameters:
                 location (str or list): A single folder path, list of paths.
 
@@ -565,7 +594,7 @@ class LibrarySection(PlexObject):
 
     def removeLocations(self, location):
         """ Remove a location from a library.
-        
+
             Parameters:
                 location (str or list): A single folder path, list of paths.
 
@@ -633,7 +662,7 @@ class LibrarySection(PlexObject):
                     guidLookup = {}
                     for item in library.all():
                         guidLookup[item.guid] = item
-                        guidLookup.update({guid.id: item for guid in item.guids}}
+                        guidLookup.update({guid.id: item for guid in item.guids})
 
                     result1 = guidLookup['plex://show/5d9c086c46115600200aa2fe']
                     result2 = guidLookup['imdb://tt0944947']
@@ -744,7 +773,7 @@ class LibrarySection(PlexObject):
 
     def lockAllField(self, field, libtype=None):
         """ Lock a field for all items in the library.
-        
+
             Parameters:
                 field (str): The field to lock (e.g. thumb, rating, collection).
                 libtype (str, optional): The library type to lock (movie, show, season, episode,
@@ -754,7 +783,7 @@ class LibrarySection(PlexObject):
 
     def unlockAllField(self, field, libtype=None):
         """ Unlock a field for all items in the library.
-        
+
             Parameters:
                 field (str): The field to unlock (e.g. thumb, rating, collection).
                 libtype (str, optional): The library type to lock (movie, show, season, episode,
@@ -847,7 +876,7 @@ class LibrarySection(PlexObject):
         """
         _key = ('/library/sections/{key}/{filter}?includeMeta=1&includeAdvanced=1'
                 '&X-Plex-Container-Start=0&X-Plex-Container-Size=0')
-               
+
         key = _key.format(key=self.key, filter='all')
         data = self._server.query(key)
         self._filterTypes = self.findItems(data, FilteringType, rtag='Meta')
@@ -894,7 +923,7 @@ class LibrarySection(PlexObject):
 
     def getFieldType(self, fieldType):
         """ Returns a :class:`~plexapi.library.FilteringFieldType` for a specified fieldType.
-        
+
             Parameters:
                 fieldType (str): The data type for the field (tag, integer, string, boolean, date,
                     subtitleLanguage, audioLanguage, resolution).
@@ -927,7 +956,7 @@ class LibrarySection(PlexObject):
 
         """
         return self.getFilterType(libtype).filters
-        
+
     def listSorts(self, libtype=None):
         """ Returns a list of available :class:`~plexapi.library.FilteringSort` for a specified libtype.
             This is the list of options in the sorting dropdown menu
@@ -970,7 +999,7 @@ class LibrarySection(PlexObject):
         """ Returns a list of available :class:`~plexapi.library.FilteringOperator` for a specified fieldType.
             This is the list of options in the custom filter operator dropdown menu
             (`screenshot <../_static/images/LibrarySection.search.png>`__).
-        
+
             Parameters:
                 fieldType (str): The data type for the field (tag, integer, string, boolean, date,
                     subtitleLanguage, audioLanguage, resolution).
@@ -992,7 +1021,7 @@ class LibrarySection(PlexObject):
             :class:`~plexapi.library.FilteringFilter` or filter field.
             This is the list of available values for a custom filter
             (`screenshot <../_static/images/LibrarySection.search.png>`__).
-            
+
             Parameters:
                 field (str): :class:`~plexapi.library.FilteringFilter` object,
                     or the name of the field (genre, year, contentRating, etc.).
@@ -1024,7 +1053,7 @@ class LibrarySection(PlexObject):
                 availableFilters = [f.filter for f in self.listFilters(libtype)]
                 raise NotFound(f'Unknown filter field "{field}" for libtype "{libtype}". '
                                f'Available filters: {availableFilters}') from None
-                
+
         data = self._server.query(field.key)
         return self.findItems(data, FilterChoice)
 
@@ -1111,7 +1140,7 @@ class LibrarySection(PlexObject):
         except (ValueError, AttributeError):
             raise BadRequest(f'Invalid value "{value}" for filter field "{filterField.key}", '
                              f'value should be type {fieldType.type}') from None
-    
+
         return results
 
     def _validateFieldValueDate(self, value):
@@ -1345,7 +1374,7 @@ class LibrarySection(PlexObject):
             Tag type filter values can be a :class:`~plexapi.library.FilterChoice` object,
             :class:`~plexapi.media.MediaTag` object, the exact name :attr:`MediaTag.tag` (*str*),
             or the exact id :attr:`MediaTag.id` (*int*).
-            
+
             Date type filter values can be a ``datetime`` object, a relative date using a one of the
             available date suffixes (e.g. ``30d``) (*str*), or a date in ``YYYY-MM-DD`` (*str*) format.
 
@@ -1358,7 +1387,7 @@ class LibrarySection(PlexObject):
             * ``w``: ``weeks``
             * ``mon``: ``months``
             * ``y``: ``years``
-            
+
             Multiple values can be ``OR`` together by providing a list of values.
 
             Examples:
@@ -1684,12 +1713,12 @@ class LibrarySection(PlexObject):
 
     def _validateItems(self, items):
         """ Validates the specified items are from this library and of the same type. """
-        if not items:
+        if items is None or items == []:
             raise BadRequest('No items specified.')
-        
+
         if not isinstance(items, list):
             items = [items]
-        
+
         itemType = items[0].type
         for item in items:
             if item.librarySectionID != self.key:
@@ -2010,6 +2039,31 @@ class MusicSection(LibrarySection, ArtistEditMixins, AlbumEditMixins, TrackEditM
         kwargs['mediaSettings'] = MediaSettings.createMusic(bitrate)
         kwargs['policy'] = Policy.create(limit)
         return super(MusicSection, self).sync(**kwargs)
+
+    def sonicAdventure(
+            self,
+            start: Track | int,
+            end: Track | int,
+            **kwargs: Any,
+    ) -> list[Track]:
+        """ Returns a list of tracks from this library section that are part of a sonic adventure.
+            ID's should be of a track, other ID's will return an empty list or items itself or an error.
+
+            Parameters:
+                start (Track | int): The :class:`~plexapi.audio.Track` or ID of the first track in the sonic adventure.
+                end (Track | int): The :class:`~plexapi.audio.Track` or ID of the last track in the sonic adventure.
+                kwargs: Additional parameters to pass to :func:`~plexapi.base.PlexObject.fetchItems`.
+
+            Returns:
+                List[:class:`~plexapi.audio.Track`]: a list of tracks from this library section
+                that are part of a sonic adventure.
+        """
+        # can not use Track due to circular import
+        startID = start if isinstance(start, int) else start.ratingKey
+        endID = end if isinstance(end, int) else end.ratingKey
+
+        key = f"/library/sections/{self.key}/computePath?startID={startID}&endID={endID}"
+        return self.fetchItems(key, **kwargs)
 
 
 class PhotoSection(LibrarySection, PhotoalbumEditMixins, PhotoEditMixins):
@@ -2727,7 +2781,9 @@ class FilteringType(PlexObject):
             ('id', 'integer', 'Rating Key'),
             ('index', 'integer', f'{self.type.capitalize()} Number'),
             ('lastRatedAt', 'date', f'{self.type.capitalize()} Last Rated'),
-            ('updatedAt', 'date', 'Date Updated')
+            ('updatedAt', 'date', 'Date Updated'),
+            ('group', 'string', 'SQL Group By Statement'),
+            ('having', 'string', 'SQL Having Clause')
         ]
 
         if self.type == 'movie':
@@ -2778,11 +2834,14 @@ class FilteringType(PlexObject):
 
         manualFields = []
         for field, fieldType, fieldTitle in additionalFields:
+            if field not in {'group', 'having'}:
+                field = f"{prefix}{field}"
             fieldXML = (
-                f'<Field key="{prefix}{field}" '
+                f'<Field key="{field}" '
                 f'title="{fieldTitle}" '
                 f'type="{fieldType}"/>'
             )
+
             manualFields.append(self._manuallyLoadXML(fieldXML, FilteringField))
 
         return manualFields
@@ -2921,6 +2980,10 @@ class FilterChoice(PlexObject):
         self.thumb = data.attrib.get('thumb')
         self.title = data.attrib.get('title')
         self.type = data.attrib.get('type')
+
+    def items(self):
+        """ Returns a list of items for this filter choice. """
+        return self.fetchItems(self.fastKey)
 
 
 class ManagedHub(PlexObject):
@@ -3102,6 +3165,7 @@ class FirstCharacter(PlexObject):
             size (str): Total amount of library items starting with this character.
             title (str): Character (#, !, A, B, C, ...).
     """
+
     def _loadData(self, data):
         """ Load attribute values from Plex XML response. """
         self._data = data

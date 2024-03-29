@@ -11,6 +11,7 @@ python plex-bootraptest.py --no-docker --server-name name_of_server --account He
 
 """
 import argparse
+from datetime import datetime
 import os
 import shutil
 import socket
@@ -121,15 +122,15 @@ def setup_music(music_path, docker=False):
         "Broke for free": {
             "Layers": [
                 "1 - As Colorful As Ever.mp3",
-                #"02 - Knock Knock.mp3",
-                #"03 - Only Knows.mp3",
-                #"04 - If.mp3",
-                #"05 - Note Drop.mp3",
-                #"06 - Murmur.mp3",
-                #"07 - Spellbound.mp3",
-                #"08 - The Collector.mp3",
-                #"09 - Quit Bitching.mp3",
-                #"10 - A Year.mp3",
+                # "02 - Knock Knock.mp3",
+                # "03 - Only Knows.mp3",
+                # "04 - If.mp3",
+                # "05 - Note Drop.mp3",
+                # "06 - Murmur.mp3",
+                # "07 - Spellbound.mp3",
+                # "08 - The Collector.mp3",
+                # "09 - Quit Bitching.mp3",
+                # "10 - A Year.mp3",
             ]
         },
 
@@ -279,7 +280,7 @@ def add_library_section(server, section):
     raise SystemExit("Timeout adding section to Plex instance.")
 
 
-def create_section(server, section, opts):
+def create_section(server, section, opts):  # noqa: C901
     processed_media = 0
     expected_media_count = section.pop("expected_media_count", 0)
     expected_media_type = (section["type"],)
@@ -337,7 +338,7 @@ def create_section(server, section, opts):
     notifier.stop()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # noqa: C901
     default_ip = get_default_ip()
     parser = argparse.ArgumentParser(description=__doc__)
     # Authentication arguments
@@ -503,9 +504,28 @@ if __name__ == "__main__":
     if not opts.unclaimed and account and account.subscriptionActive:
         server.settings.get("GenerateIntroMarkerBehavior").set("never")
         server.settings.get("GenerateCreditsMarkerBehavior").set("never")
+        server.settings.get("MusicAnalysisBehavior").set("never")
     server.settings.get("GenerateBIFBehavior").set("never")
     server.settings.get("GenerateChapterThumbBehavior").set("never")
     server.settings.get("LoudnessAnalysisBehavior").set("never")
+
+    # disable butler tasks
+    current_hour = datetime.now().hour
+    start_hour = (current_hour + 12) % 24
+    end_hour = (current_hour + 15) % 24
+    server.settings.get("ButlerStartHour").set(start_hour)
+    server.settings.get("ButlerEndHour").set(end_hour)
+
+    # find all butler settings
+    for setting in server.settings.all():
+        if setting.id.lower().startswith("butler") and isinstance(setting.value, bool):
+            try:
+                setting.set(False)
+                print("Disabled setting '{}'".format(setting))
+            except NotFound:
+                print("Setting '{}' not found".format(setting))
+
+    # save settings
     server.settings.save()
 
     sections = []
